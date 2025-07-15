@@ -69,13 +69,30 @@
         .delete-btn:hover { background-color: #d32f2f; }
         .edit-btn { background-color: var(--accent-cyan); }
         .edit-btn:hover { background-color: #00acc1; }
-        .remove-exercise-btn { background-color: var(--accent-orange); color: white; border: none; padding: 0 10px; border-radius: 5px; cursor: pointer; }
-        
+        .remove-exercise-btn { background-color: var(--accent-red); color: white; font-size: 0.8em; padding: 4px 8px; }
+        .details-btn { background-color: var(--bg-primary); color: var(--accent-cyan); font-size: 0.8em; padding: 4px 8px; }
+
         /* Exercise Input Group */
         .exercise-group {
             border: 1px dashed var(--border-color); padding: 15px; border-radius: 5px;
-            display: grid; grid-template-columns: 1fr repeat(2, 80px) 1.5fr auto;
-            gap: 10px; align-items: center;
+            display: grid; grid-template-columns: 1fr; gap: 10px;
+        }
+        .exercise-row-1, .exercise-row-2, .exercise-row-3 {
+            display: grid;
+            gap: 10px;
+            align-items: center;
+        }
+        .exercise-row-1 {
+            grid-template-columns: 1fr repeat(2, 80px) 1.5fr;
+        }
+        .exercise-row-2 {
+            grid-template-columns: 1fr 1fr;
+            display: none; /* Hidden by default */
+        }
+        .exercise-row-3 {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
         }
         .weight-input-group {
             display: grid; grid-template-columns: auto 1fr auto 90px;
@@ -91,7 +108,8 @@
         .exercise-weight::-webkit-outer-spin-button, .exercise-weight::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
         /* History and PRs */
-        #workout-history, #personal-records { margin-top: 30px; }
+        #personal-records { margin-top: 30px; }
+        .pr-section { margin-bottom: 25px; }
         .workout-category-section { margin-bottom: 25px; }
         .workout-item {
             background: var(--bg-tertiary); padding: 15px; border-radius: 5px;
@@ -99,11 +117,17 @@
         }
         .workout-item-header { display: flex; justify-content: space-between; align-items: center; }
         .workout-item-header h4 { margin: 0; font-size: 1.1em; }
-        .workout-item ul { padding-left: 20px; margin-bottom: 0; }
-        .workout-item li { cursor: pointer; transition: color 0.2s; }
+        .workout-item ul { padding-left: 20px; margin-bottom: 0; list-style-type: none; }
+        .workout-item li { cursor: pointer; transition: color 0.2s; margin-bottom: 5px; }
         .workout-item li:hover { color: var(--accent-cyan); font-weight: bold; }
+        .exercise-details { font-size: 0.9em; color: var(--text-secondary); padding-left: 15px; }
         .empty-state { color: var(--text-secondary); text-align: center; padding: 20px; }
-        .edit-controls { margin-top: 10px; }
+        .edit-controls { 
+            margin-top: 15px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
 
         /* Table Styling */
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
@@ -161,11 +185,20 @@
 
         <!-- Personal Records Section -->
         <div id="personal-records">
-            <h2>Personal Records (Max Weight)</h2>
-            <table id="pr-table">
-                <thead><tr><th>Exercise</th><th>Max Weight (kg)</th><th>Date Achieved</th></tr></thead>
-                <tbody></tbody>
-            </table>
+            <div class="pr-section">
+                <h2>Personal Records (Max Weight)</h2>
+                <table id="pr-table">
+                    <thead><tr><th>Exercise</th><th>Max Weight (kg)</th><th>Date Achieved</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+            <div class="pr-section">
+                <h2>Personal Records (Max Reps)</h2>
+                <table id="rep-pr-table">
+                    <thead><tr><th>Exercise</th><th>Max Reps</th><th>At Weight (kg)</th><th>Date Achieved</th></tr></thead>
+                    <tbody></tbody>
+                </table>
+            </div>
         </div>
 
         <!-- Workout History Section -->
@@ -223,8 +256,10 @@
             <canvas id="progression-chart"></canvas>
             <div class="chart-controls">
                 <p>Data Type</p>
-                <button id="weight-chart-btn" onclick="showWeightChart()">Weight</button>
-                <button id="reps-chart-btn" onclick="showRepsChart()">Total Reps</button>
+                <button onclick="showWeightChart()">Weight</button>
+                <button onclick="showRepsChart()">Total Reps</button>
+                <button onclick="showRestChart()">Rest Time</button>
+                <button onclick="showTutChart()">TUT</button>
             </div>
             <div class="chart-controls">
                 <p>Chart Style</p>
@@ -250,6 +285,7 @@
         const typeInput = document.getElementById('workout-type');
         const exercisesContainer = document.getElementById('exercises-container');
         const prTableBody = document.querySelector('#pr-table tbody');
+        const repPrTableBody = document.querySelector('#rep-pr-table tbody');
         const chartModal = document.getElementById('chart-modal');
 
         // All-Time History Controls
@@ -259,7 +295,7 @@
         const allTimeHistoryList = document.getElementById('all-time-history-list');
 
         // --- Database Setup ---
-        const request = indexedDB.open("WorkoutDB", 5);
+        const request = indexedDB.open("WorkoutDB", 6);
 
         request.onupgradeneeded = function(event) {
             db = event.target.result;
@@ -269,6 +305,9 @@
             }
             if (!db.objectStoreNames.contains('personalRecords')) {
                 db.createObjectStore("personalRecords", { keyPath: "exerciseName" });
+            }
+            if (!db.objectStoreNames.contains('repRecords')) {
+                db.createObjectStore("repRecords", { keyPath: "exerciseName" });
             }
         };
 
@@ -289,26 +328,40 @@
             dateInput.value = new Date().toISOString().split('T')[0];
         }
 
-        function createExerciseFieldHtml(exercise = {}) {
+        function createExerciseFieldHtml(exercise = {}, isFirst = false) {
             const name = exercise.name || '';
             const sets = exercise.sets || '';
             const reps = exercise.reps || '';
             const weight = exercise.unit === 'bw' ? '' : (exercise.weight || '');
             const unit = exercise.unit || 'kg';
             const isBw = unit === 'bw';
+            const restTime = exercise.restTime || '';
+            const tut = exercise.tut || '';
+            const showDetails = !!(restTime || tut);
+            const removeButtonHtml = isFirst ? '' : `<button type="button" class="remove-exercise-btn" onclick="this.closest('.exercise-group').remove()">Remove</button>`;
 
             return `
-                <input type="text" class="exercise-name" placeholder="Exercise Name" value="${name}" required>
-                <input type="number" class="exercise-sets" placeholder="Sets" min="1" value="${sets}" required>
-                <input type="number" class="exercise-reps" placeholder="Reps" min="1" value="${reps}" required>
-                <div class="weight-input-group">
-                    <button type="button" class="weight-adjust-btn" onclick="adjustWeight(this, -2.5)" ${isBw ? 'disabled' : ''}>-</button>
-                    <input type="number" class="exercise-weight" placeholder="Weight" min="0" step="any" value="${weight}" ${isBw ? 'disabled' : ''} required>
-                    <button type="button" class="weight-adjust-btn" onclick="adjustWeight(this, 2.5)" ${isBw ? 'disabled' : ''}>+</button>
-                    <select class="exercise-unit" onchange="toggleWeightInput(this)">
-                        <option value="kg" ${unit === 'kg' ? 'selected' : ''}>kg</option>
-                        <option value="bw" ${unit === 'bw' ? 'selected' : ''}>Bodyweight</option>
-                    </select>
+                <div class="exercise-row-1">
+                    <input type="text" class="exercise-name" placeholder="Exercise Name" value="${name}" required>
+                    <input type="number" class="exercise-sets" placeholder="Sets" min="1" value="${sets}" required>
+                    <input type="number" class="exercise-reps" placeholder="Reps" min="1" value="${reps}" required>
+                    <div class="weight-input-group">
+                        <button type="button" class="weight-adjust-btn" onclick="adjustWeight(this, -2.5)" ${isBw ? 'disabled' : ''}>-</button>
+                        <input type="number" class="exercise-weight" placeholder="Weight" min="0" step="any" value="${weight}" ${isBw ? 'disabled' : ''} required>
+                        <button type="button" class="weight-adjust-btn" onclick="adjustWeight(this, 2.5)" ${isBw ? 'disabled' : ''}>+</button>
+                        <select class="exercise-unit" onchange="toggleWeightInput(this)">
+                            <option value="kg" ${unit === 'kg' ? 'selected' : ''}>kg</option>
+                            <option value="bw" ${unit === 'bw' ? 'selected' : ''}>Bodyweight</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="exercise-row-2" style="display: ${showDetails ? 'grid' : 'none'}">
+                    <input type="number" class="exercise-rest" placeholder="Rest Time (s)" min="0" value="${restTime}">
+                    <input type="number" class="exercise-tut" placeholder="Time Under Tension (s)" min="0" value="${tut}">
+                </div>
+                <div class="exercise-row-3">
+                    <button type="button" class="details-btn" onclick="toggleDetails(this)">${showDetails ? 'Hide' : 'Track'} Details</button>
+                    ${removeButtonHtml}
                 </div>
             `;
         }
@@ -316,12 +369,19 @@
         function addExerciseField(isFirst = false, container = exercisesContainer) {
             const newExerciseGroup = document.createElement('div');
             newExerciseGroup.className = 'exercise-group';
-            let html = createExerciseFieldHtml();
-            if (!isFirst && container === exercisesContainer) {
-                html += `<button type="button" class="remove-exercise-btn" onclick="this.parentElement.remove()">X</button>`;
-            }
-            newExerciseGroup.innerHTML = html;
+            newExerciseGroup.innerHTML = createExerciseFieldHtml({}, isFirst);
             container.appendChild(newExerciseGroup);
+        }
+        
+        function toggleDetails(button) {
+            const detailsRow = button.closest('.exercise-group').querySelector('.exercise-row-2');
+            const isHidden = detailsRow.style.display === 'none';
+            detailsRow.style.display = isHidden ? 'grid' : 'none';
+            button.textContent = isHidden ? 'Hide Details' : 'Track Details';
+            if (!isHidden) { // Clear values when hiding
+                detailsRow.querySelector('.exercise-rest').value = '';
+                detailsRow.querySelector('.exercise-tut').value = '';
+            }
         }
 
         function resetAndAddFirstExercise() {
@@ -359,8 +419,19 @@
                 const unit = group.querySelector('.exercise-unit').value;
                 const weightValue = group.querySelector('.exercise-weight').value;
                 const weight = unit === 'bw' ? 0 : parseFloat(weightValue);
+                const detailsRow = group.querySelector('.exercise-row-2');
+                const trackDetails = detailsRow.style.display !== 'none';
+
                 if (name && !isNaN(weight)) {
-                     exercises.push({ name, sets: parseInt(group.querySelector('.exercise-sets').value), reps: parseInt(group.querySelector('.exercise-reps').value), weight, unit });
+                     exercises.push({ 
+                        name, 
+                        sets: parseInt(group.querySelector('.exercise-sets').value), 
+                        reps: parseInt(group.querySelector('.exercise-reps').value), 
+                        weight, 
+                        unit,
+                        restTime: trackDetails ? (parseInt(group.querySelector('.exercise-rest').value) || null) : null,
+                        tut: trackDetails ? (parseInt(group.querySelector('.exercise-tut').value) || null) : null,
+                    });
                 }
             });
             if (exercises.length === 0) return;
@@ -383,7 +454,6 @@
         }
         
         function deleteWorkout(workoutId) {
-            if (!confirm("Are you sure you want to delete this workout?")) return;
             const transaction = db.transaction("workouts", "readwrite");
             transaction.objectStore("workouts").delete(workoutId);
             transaction.oncomplete = () => {
@@ -394,27 +464,32 @@
         }
 
         function recalculateAllPRs() {
-            const transaction = db.transaction(['workouts', 'personalRecords'], 'readwrite');
+            const transaction = db.transaction(['workouts', 'personalRecords', 'repRecords'], 'readwrite');
             const workoutsStore = transaction.objectStore('workouts');
             const prStore = transaction.objectStore('personalRecords');
+            const repPrStore = transaction.objectStore('repRecords');
             const getAllRequest = workoutsStore.getAll();
 
             getAllRequest.onsuccess = () => {
                 const allWorkouts = getAllRequest.result;
-                const newPRs = {};
+                const newWeightPRs = {};
+                const newRepPRs = {};
+
                 allWorkouts.forEach(w => {
                     w.exercises.forEach(ex => {
                         if (ex.unit === 'kg') {
-                            if (!newPRs[ex.name] || ex.weight > newPRs[ex.name].weight) {
-                                newPRs[ex.name] = { exerciseName: ex.name, weight: ex.weight, date: w.date };
+                            if (!newWeightPRs[ex.name] || ex.weight > newWeightPRs[ex.name].weight) {
+                                newWeightPRs[ex.name] = { exerciseName: ex.name, weight: ex.weight, date: w.date };
                             }
+                        }
+                        if (!newRepPRs[ex.name] || ex.reps > newRepPRs[ex.name].reps) {
+                            newRepPRs[ex.name] = { exerciseName: ex.name, reps: ex.reps, weight: ex.weight, date: w.date };
                         }
                     });
                 });
-                const clearRequest = prStore.clear();
-                clearRequest.onsuccess = () => {
-                    Object.values(newPRs).forEach(pr => prStore.put(pr));
-                };
+
+                prStore.clear().onsuccess = () => Object.values(newWeightPRs).forEach(pr => prStore.put(pr));
+                repPrStore.clear().onsuccess = () => Object.values(newRepPRs).forEach(pr => repPrStore.put(pr));
             };
             transaction.oncomplete = () => {
                 console.log("PRs recalculated.");
@@ -427,13 +502,13 @@
         // --- Display & Edit Functions ---
         function getWeekBounds(date) {
             const d = new Date(date);
-            const day = d.getDay(); // Sunday - 0, Monday - 1, ...
+            const day = d.getDay();
             const diff = d.getDate() - day;
             const startOfWeek = new Date(d.setDate(diff));
-            startOfWeek.setHours(0, 0, 0, 0); // Start of Sunday
+            startOfWeek.setHours(0, 0, 0, 0);
             const endOfWeek = new Date(startOfWeek);
             endOfWeek.setDate(startOfWeek.getDate() + 6);
-            endOfWeek.setHours(23, 59, 59, 999); // End of Saturday
+            endOfWeek.setHours(23, 59, 59, 999);
             return { start: startOfWeek, end: endOfWeek };
         }
 
@@ -445,7 +520,6 @@
                 
                 const workouts = request.result.filter(w => {
                     const workoutDate = new Date(w.date);
-                    // Adjust for timezone offset to compare dates correctly
                     workoutDate.setMinutes(workoutDate.getMinutes() + workoutDate.getTimezoneOffset());
                     return workoutDate >= start && workoutDate <= end;
                 }).sort((a, b) => b.date.localeCompare(a.date));
@@ -474,7 +548,7 @@
             const workoutId = workout.id;
             let content;
             if (isEditing) {
-                const exercisesHtml = workout.exercises.map(ex => `<div class="exercise-group">${createExerciseFieldHtml(ex)}</div>`).join('');
+                const exercisesHtml = workout.exercises.map(ex => `<div class="exercise-group">${createExerciseFieldHtml(ex, true)}</div>`).join('');
                 content = `
                     <div class="workout-item-header"> 
                         <input type="date" value="${workout.date}" class="editing-date">
@@ -488,18 +562,26 @@
                     <div class="edit-controls">
                         <button onclick="saveEditedWorkout(${workoutId})">Save Changes</button>
                         <button onclick="loadWorkouts(); loadAllTimeHistory();">Cancel</button>
+                        <button class="delete-btn" onclick="deleteWorkout(${workoutId})">Delete Workout</button>
                     </div>`;
             } else {
                 const exercisesHtml = workout.exercises.map(ex => {
                     const weightDisplay = ex.unit === 'bw' ? 'Bodyweight' : `${ex.weight} kg`;
-                    return `<li onclick="viewProgression('${ex.name}', '${workout.type}')" title="Click to see progression for ${ex.name}"><strong>${ex.name}:</strong> ${ex.sets} sets of ${ex.reps} reps @ ${weightDisplay}</li>`;
+                    let details = '';
+                    if (ex.restTime) details += ` | Rest: ${ex.restTime}s`;
+                    if (ex.tut) details += ` | TUT: ${ex.tut}s`;
+
+                    return `
+                        <li onclick="viewProgression('${ex.name}', '${workout.type}')" title="Click to see progression for ${ex.name}">
+                            <strong>${ex.name}:</strong> ${ex.sets} sets of ${ex.reps} reps @ ${weightDisplay}
+                            ${details ? `<div class="exercise-details">${details.substring(3)}</div>` : ''}
+                        </li>`;
                 }).join('');
                 content = `
                     <div class="workout-item-header">
                         <h4>Workout on ${workout.date}</h4>
                         <div>
                             <button class="action-btn edit-btn" onclick="toggleEditMode(${workoutId})">Edit</button>
-                            <button class="action-btn delete-btn" onclick="deleteWorkout(${workoutId})">Delete</button>
                         </div>
                     </div>
                     <ul>${exercisesHtml}</ul>`;
@@ -527,20 +609,37 @@
                 const unit = group.querySelector('.exercise-unit').value;
                 const weightValue = group.querySelector('.exercise-weight').value;
                 const weight = unit === 'bw' ? 0 : parseFloat(weightValue);
+                const detailsRow = group.querySelector('.exercise-row-2');
+                const trackDetails = detailsRow.style.display !== 'none';
                 if (name && !isNaN(weight)) {
-                    exercises.push({ name, sets: parseInt(group.querySelector('.exercise-sets').value), reps: parseInt(group.querySelector('.exercise-reps').value), weight, unit });
+                    exercises.push({ 
+                        name, 
+                        sets: parseInt(group.querySelector('.exercise-sets').value), 
+                        reps: parseInt(group.querySelector('.exercise-reps').value), 
+                        weight, 
+                        unit,
+                        restTime: trackDetails ? (parseInt(group.querySelector('.exercise-rest').value) || null) : null,
+                        tut: trackDetails ? (parseInt(group.querySelector('.exercise-tut').value) || null) : null,
+                    });
                 }
             });
             if (exercises.length > 0) saveWorkout({ id: workoutId, date: newDate, type: newType, exercises });
         }
 
         function loadPRs() {
-            const request = db.transaction("personalRecords", "readonly").objectStore("personalRecords").getAll();
-            request.onsuccess = () => {
-                const prs = request.result.sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
+            const prRequest = db.transaction("personalRecords", "readonly").objectStore("personalRecords").getAll();
+            prRequest.onsuccess = () => {
+                const prs = prRequest.result.sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
                 prTableBody.innerHTML = prs.length === 0
-                    ? `<tr><td colspan="3" class="empty-state">No personal records set yet.</td></tr>`
+                    ? `<tr><td colspan="3" class="empty-state">No max weight records set yet.</td></tr>`
                     : prs.map(pr => `<tr><td>${pr.exerciseName}</td><td>${pr.weight} kg</td><td>${pr.date}</td></tr>`).join('');
+            };
+            const repPrRequest = db.transaction("repRecords", "readonly").objectStore("repRecords").getAll();
+            repPrRequest.onsuccess = () => {
+                const prs = repPrRequest.result.sort((a, b) => a.exerciseName.localeCompare(b.exerciseName));
+                repPrTableBody.innerHTML = prs.length === 0
+                    ? `<tr><td colspan="4" class="empty-state">No max rep records set yet.</td></tr>`
+                    : prs.map(pr => `<tr><td>${pr.exerciseName}</td><td>${pr.reps}</td><td>${pr.weight} kg</td><td>${pr.date}</td></tr>`).join('');
             };
         }
         
@@ -553,7 +652,13 @@
                     if (w.type === workoutType) {
                         w.exercises.forEach(ex => {
                             if (ex.name === exerciseName) {
-                                currentProgressionData.push({ date: w.date, weight: ex.unit === 'kg' ? ex.weight : 0, totalReps: ex.sets * ex.reps });
+                                currentProgressionData.push({ 
+                                    date: w.date, 
+                                    weight: ex.unit === 'kg' ? ex.weight : 0, 
+                                    totalReps: ex.sets * ex.reps,
+                                    restTime: ex.restTime || 0,
+                                    tut: ex.tut || 0
+                                });
                             }
                         });
                     }
@@ -564,7 +669,12 @@
                 const typeDisplayName = typeDisplayMap[workoutType] || 'Workout';
 
                 document.getElementById('chart-title').innerText = `Progression for ${exerciseName} (${typeDisplayName})`;
-                currentChartType === 'weight' ? showWeightChart() : showRepsChart();
+                // Default to weight chart, or first available data type
+                if(currentProgressionData.some(d => d.weight > 0)) showWeightChart();
+                else if (currentProgressionData.some(d => d.totalReps > 0)) showRepsChart();
+                else if (currentProgressionData.some(d => d.restTime > 0)) showRestChart();
+                else showTutChart();
+
                 chartModal.style.display = 'flex';
             };
         }
@@ -582,10 +692,27 @@
             const data = currentProgressionData.map(d => d.totalReps);
             renderChart(labels, data, 'Total Reps', currentChartStyle);
         }
+        
+        function showRestChart() {
+            currentChartType = 'rest';
+            const labels = currentProgressionData.map(d => d.date);
+            const data = currentProgressionData.map(d => d.restTime);
+            renderChart(labels, data, 'Rest Time (s)', currentChartStyle);
+        }
+
+        function showTutChart() {
+            currentChartType = 'tut';
+            const labels = currentProgressionData.map(d => d.date);
+            const data = currentProgressionData.map(d => d.tut);
+            renderChart(labels, data, 'Time Under Tension (s)', currentChartStyle);
+        }
 
         function setChartStyle(style) {
             currentChartStyle = style;
-            currentChartType === 'weight' ? showWeightChart() : showRepsChart();
+            if (currentChartType === 'weight') showWeightChart();
+            else if (currentChartType === 'reps') showRepsChart();
+            else if (currentChartType === 'rest') showRestChart();
+            else if (currentChartType === 'tut') showTutChart();
         }
 
         function renderChart(labels, data, yAxisLabel, style) {
@@ -669,19 +796,16 @@
                 const sortDate = sortDateEl.value;
                 const searchTerm = searchExerciseEl.value.toLowerCase();
 
-                // 1. Filter by Type
                 if (filterType !== 'all') {
                     workouts = workouts.filter(w => w.type === filterType);
                 }
 
-                // 2. Filter by Search Term
                 if (searchTerm) {
                     workouts = workouts.filter(w => 
                         w.exercises.some(ex => ex.name.toLowerCase().includes(searchTerm))
                     );
                 }
 
-                // 3. Sort by Date
                 workouts.sort((a, b) => {
                     if (sortDate === 'newest') {
                         return b.date.localeCompare(a.date);
@@ -690,7 +814,6 @@
                     }
                 });
 
-                // Render the filtered list
                 if (workouts.length > 0) {
                     allTimeHistoryList.innerHTML = workouts.map(w => renderWorkoutItem(w)).join('');
                 } else {
